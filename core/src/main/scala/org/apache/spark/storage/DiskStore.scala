@@ -134,7 +134,7 @@ private[spark] class DiskStore(blockManager: BlockManager, diskManager: DiskBloc
   }
 
   def getBytes(segment: FileSegment): Option[ByteBuffer] = {
-    getBytes(segment.file, segment.offset, segment.length)
+    getBytes(new File(segment.file), segment.offset, segment.length)
   }
 
   override def getValues(blockId: BlockId): Option[Iterator[Any]] = {

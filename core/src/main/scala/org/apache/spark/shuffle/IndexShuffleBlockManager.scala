@@ -19,13 +19,13 @@ package org.apache.spark.shuffle
 
 import java.io._
 import java.nio.ByteBuffer
-
 import com.google.common.io.ByteStreams
-
 import org.apache.spark.{SparkConf, SparkEnv}
 import org.apache.spark.network.buffer.{FileSegmentManagedBuffer, ManagedBuffer}
 import org.apache.spark.network.netty.SparkTransportConf
 import org.apache.spark.storage._
+import java.net.URI
+import org.apache.spark.storage.FileSystem
 
 /**
  * Create and maintain the shuffle blocks' mapping between logic block and physical file location.
@@ -39,7 +39,10 @@ import org.apache.spark.storage._
 // Note: Changes to the format in this file should be kept in sync with
 // org.apache.spark.network.shuffle.StandaloneShuffleBlockManager#getSortBasedShuffleBlockData().
 private[spark]
-class IndexShuffleBlockManager(conf: SparkConf) extends ShuffleBlockManager {
+class IndexShuffleBlockManager(
+    conf: SparkConf,
+    fileSystem: FileSystem
+  ) extends ShuffleBlockManager {
 
   private lazy val blockManager = SparkEnv.get.blockManager
 
@@ -52,27 +55,20 @@ class IndexShuffleBlockManager(conf: SparkConf) extends ShuffleBlockManager {
     ShuffleBlockId(shuffleId, mapId, 0)
   }
 
-  def getDataFile(shuffleId: Int, mapId: Int): File = {
-    blockManager.diskBlockManager.getFile(ShuffleDataBlockId(shuffleId, mapId, 0))
+  def getDataFile(shuffleId: Int, mapId: Int): URI = {
+    fileSystem.getTempFilePath(ShuffleDataBlockId(shuffleId, mapId, 0).name)
   }
 
-  private def getIndexFile(shuffleId: Int, mapId: Int): File = {
-    blockManager.diskBlockManager.getFile(ShuffleIndexBlockId(shuffleId, mapId, 0))
+  private def getIndexFile(shuffleId: Int, mapId: Int): URI = {
+    fileSystem.getTempFilePath(ShuffleIndexBlockId(shuffleId, mapId, 0).name)
   }
 
   /**
    * Remove data file and index file that contain the output data from one map.
    * */
   def removeDataByMap(shuffleId: Int, mapId: Int): Unit = {
-    var file = getDataFile(shuffleId, mapId)
-    if (file.exists()) {
-      file.delete()
-    }
-
-    file = getIndexFile(shuffleId, mapId)
-    if (file.exists()) {
-      file.delete()
-    }
+    fileSystem.deleteFile(getDataFile(shuffleId, mapId))
+    fileSystem.deleteFile(getIndexFile(shuffleId, mapId))
   }
 
   /**
@@ -81,8 +77,7 @@ class IndexShuffleBlockManager(conf: SparkConf) extends ShuffleBlockManager {
    * begins and ends.
    * */
   def writeIndexFile(shuffleId: Int, mapId: Int, lengths: Array[Long]) = {
-    val indexFile = getIndexFile(shuffleId, mapId)
-    val out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(indexFile)))
+    val out = fileSystem.create(getIndexFile(shuffleId, mapId), false)
     try {
       // We take in lengths of each block, need to convert it to offsets.
       var offset = 0L
@@ -105,19 +100,19 @@ class IndexShuffleBlockManager(conf: SparkConf) extends ShuffleBlockManager {
     // The block is actually going to be a range of a single map output file for this map, so
     // find out the consolidated file, then the offset within that from our index
     val indexFile = getIndexFile(blockId.shuffleId, blockId.mapId)
+    val inputStream = fileSystem.open(indexFile)
 
-    val in = new DataInputStream(new FileInputStream(indexFile))
     try {
-      ByteStreams.skipFully(in, blockId.reduceId * 8)
-      val offset = in.readLong()
-      val nextOffset = in.readLong()
-      new FileSegmentManagedBuffer(
-        transportConf,
+      inputStream.skip(blockId.reduceId * 8)
+      val offset = inputStream.readLong
+      val nextOffset = inputStream.readLong
+      fileSystem.createManagedBuffer(
         getDataFile(blockId.shuffleId, blockId.mapId),
         offset,
-        nextOffset - offset)
+        nextOffset - offset,
+        transportConf)
     } finally {
-      in.close()
+      inputStream.close()
     }
   }
 

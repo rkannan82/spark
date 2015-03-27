@@ -20,11 +20,10 @@ package org.apache.spark.shuffle.hash
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
 import scala.util.{Failure, Success, Try}
-
 import org.apache.spark._
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.FetchFailedException
-import org.apache.spark.storage.{BlockId, BlockManagerId, ShuffleBlockFetcherIterator, ShuffleBlockId}
+import org.apache.spark.storage.{BlockId, BlockManagerId, FileSystem, ShuffleBlockFetcherIterator, ShuffleBlockId}
 import org.apache.spark.util.CompletionIterator
 
 private[hash] object BlockStoreShuffleFetcher extends Logging {
@@ -32,7 +31,8 @@ private[hash] object BlockStoreShuffleFetcher extends Logging {
       shuffleId: Int,
       reduceId: Int,
       context: TaskContext,
-      serializer: Serializer)
+      serializer: Serializer,
+      fileSystem: FileSystem)
     : Iterator[T] =
   {
     logDebug("Fetching outputs for shuffle %d, reduce %d".format(shuffleId, reduceId))
@@ -75,11 +75,12 @@ private[hash] object BlockStoreShuffleFetcher extends Logging {
 
     val blockFetcherItr = new ShuffleBlockFetcherIterator(
       context,
-      SparkEnv.get.blockManager.shuffleClient,
+      fileSystem.getShuffleClient,
       blockManager,
       blocksByAddress,
       serializer,
       SparkEnv.get.conf.getLong("spark.reducer.maxMbInFlight", 48) * 1024 * 1024)
+
     val itr = blockFetcherItr.flatMap(unpackBlock)
 
     val completionIter = CompletionIterator[T, Iterator[T]](itr, {

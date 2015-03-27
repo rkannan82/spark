@@ -19,10 +19,13 @@ package org.apache.spark.storage
 
 import java.io.{BufferedOutputStream, FileOutputStream, File, OutputStream}
 import java.nio.channels.FileChannel
-
 import org.apache.spark.Logging
 import org.apache.spark.serializer.{SerializationStream, Serializer}
 import org.apache.spark.executor.ShuffleWriteMetrics
+import org.apache.hadoop.fs.FSDataOutputStream
+import java.net.URI
+import org.apache.hadoop.fs.FSDataInputStream
+import java.io.FileNotFoundException
 
 /**
  * An interface for writing JVM objects to some underlying storage. This interface allows
@@ -66,17 +69,20 @@ private[spark] abstract class BlockObjectWriter(val blockId: BlockId) {
 
 /**
  * BlockObjectWriter which writes directly to a file on disk. Appends to the given file.
+ * If the given <code>fileSystem</code> refers to a distributed file system,
+ * then the file will be created on it instead of local file system.
  */
 private[spark] class DiskBlockObjectWriter(
     blockId: BlockId,
-    file: File,
+    file: URI,
     serializer: Serializer,
     bufferSize: Int,
     compressStream: OutputStream => OutputStream,
     syncWrites: Boolean,
     // These write metrics concurrently shared with other active BlockObjectWriter's who
     // are themselves performing writes. All updates must be relative.
-    writeMetrics: ShuffleWriteMetrics)
+    writeMetrics: ShuffleWriteMetrics,
+    fileSystem: FileSystem = new LocalFileSystem)
   extends BlockObjectWriter(blockId)
   with Logging
 {
@@ -89,10 +95,8 @@ private[spark] class DiskBlockObjectWriter(
     override def flush() = out.flush()
   }
 
-  /** The file channel, used for repositioning / truncating the file. */
-  private var channel: FileChannel = null
   private var bs: OutputStream = null
-  private var fos: FileOutputStream = null
+  private var fos: FSDataOutputStream = null
   private var ts: TimeTrackingOutputStream = null
   private var objOut: SerializationStream = null
   private var initialized = false
@@ -113,9 +117,9 @@ private[spark] class DiskBlockObjectWriter(
    * -----: Current writes to the underlying file.
    * xxxxx: Existing contents of the file.
    */
-  private val initialPosition = file.length()
+  private val initialPosition: Long = getFileSize
   private var finalPosition: Long = -1
-  private var reportedPosition = initialPosition
+  private var reportedPosition: Long = initialPosition
 
   /**
    * Keep track of number of records written and also use this to periodically
@@ -123,16 +127,31 @@ private[spark] class DiskBlockObjectWriter(
    */
   private var numRecordsWritten = 0
 
+  private def getFileSize: Long = {
+    try {
+      fileSystem.getFileSize(file)
+    } catch {
+      case e: FileNotFoundException => 0
+    }
+  }
+
+  private def logStats = {
+    logDebug("File = %s : Positions = %d:%d:%d".format(file, initialPosition,
+      reportedPosition, finalPosition))
+  }
+
   override def open(): BlockObjectWriter = {
     if (hasBeenClosed) {
       throw new IllegalStateException("Writer already closed. Cannot be reopened.")
     }
-    fos = new FileOutputStream(file, true)
+
+    fos = fileSystem.create(file, true)
     ts = new TimeTrackingOutputStream(fos)
-    channel = fos.getChannel()
     bs = compressStream(new BufferedOutputStream(ts, bufferSize))
     objOut = serializer.newInstance().serializeStream(bs)
     initialized = true
+    logStats
+
     this
   }
 
@@ -141,12 +160,11 @@ private[spark] class DiskBlockObjectWriter(
       if (syncWrites) {
         // Force outstanding writes to disk and track how long it takes
         objOut.flush()
-        def sync = fos.getFD.sync()
+        def sync = fos.sync()
         callWithTiming(sync)
       }
       objOut.close()
 
-      channel = null
       bs = null
       fos = null
       ts = null
@@ -154,6 +172,7 @@ private[spark] class DiskBlockObjectWriter(
       initialized = false
       hasBeenClosed = true
     }
+    logStats
   }
 
   override def isOpen: Boolean = objOut != null
@@ -166,7 +185,7 @@ private[spark] class DiskBlockObjectWriter(
       bs.flush()
       close()
     }
-    finalPosition = file.length()
+    finalPosition = getFileSize
     // In certain compression codecs, more bytes are written after close() is called
     writeMetrics.incShuffleBytesWritten(finalPosition - reportedPosition)
   }
@@ -184,9 +203,9 @@ private[spark] class DiskBlockObjectWriter(
         close()
       }
 
-      val truncateStream = new FileOutputStream(file, true)
+      val truncateStream = fileSystem.open(file)
       try {
-        truncateStream.getChannel.truncate(initialPosition)
+        fileSystem.truncateStream(truncateStream, initialPosition)
       } finally {
         truncateStream.close()
       }
@@ -196,7 +215,7 @@ private[spark] class DiskBlockObjectWriter(
     }
   }
 
-  override def write(value: Any) {
+  override def write(value: Any) = {
     if (!initialized) {
       open()
     }
@@ -208,6 +227,7 @@ private[spark] class DiskBlockObjectWriter(
     if (numRecordsWritten % 32 == 0) {
       updateBytesWritten()
     }
+    logStats
   }
 
   override def fileSegment(): FileSegment = {
@@ -219,7 +239,7 @@ private[spark] class DiskBlockObjectWriter(
    * Note that this is only valid before the underlying streams are closed.
    */
   private def updateBytesWritten() {
-    val pos = channel.position()
+    val pos = fos.getPos
     writeMetrics.incShuffleBytesWritten(pos - reportedPosition)
     reportedPosition = pos
   }

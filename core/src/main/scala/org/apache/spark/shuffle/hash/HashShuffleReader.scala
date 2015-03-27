@@ -21,12 +21,14 @@ import org.apache.spark.{InterruptibleIterator, TaskContext}
 import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.{BaseShuffleHandle, ShuffleReader}
 import org.apache.spark.util.collection.ExternalSorter
+import org.apache.spark.storage.{FileSystem, LocalFileSystem}
 
 private[spark] class HashShuffleReader[K, C](
     handle: BaseShuffleHandle[K, _, C],
     startPartition: Int,
     endPartition: Int,
-    context: TaskContext)
+    context: TaskContext,
+    fileSystem: FileSystem = new LocalFileSystem)
   extends ShuffleReader[K, C]
 {
   require(endPartition == startPartition + 1,
@@ -37,7 +39,8 @@ private[spark] class HashShuffleReader[K, C](
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[K, C]] = {
     val ser = Serializer.getSerializer(dep.serializer)
-    val iter = BlockStoreShuffleFetcher.fetch(handle.shuffleId, startPartition, context, ser)
+    val iter = BlockStoreShuffleFetcher.fetch(handle.shuffleId, startPartition,
+      context, ser, fileSystem)
 
     val aggregatedIter: Iterator[Product2[K, C]] = if (dep.aggregator.isDefined) {
       if (dep.mapSideCombine) {

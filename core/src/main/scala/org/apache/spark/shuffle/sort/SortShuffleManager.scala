@@ -18,15 +18,29 @@
 package org.apache.spark.shuffle.sort
 
 import java.util.concurrent.ConcurrentHashMap
-
 import org.apache.spark.{SparkConf, TaskContext, ShuffleDependency}
 import org.apache.spark.shuffle._
 import org.apache.spark.shuffle.hash.HashShuffleReader
+import org.apache.spark.storage.LocalFileSystem
+import org.apache.spark.storage.FileSystem
+import org.apache.hadoop.conf.Configuration
+import org.apache.spark.storage.DistributedFileSystem
 
-private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager {
+private[spark] class SortShuffleManager(
+    conf: SparkConf)
+  extends ShuffleManager {
 
-  private val indexShuffleBlockManager = new IndexShuffleBlockManager(conf)
+  private lazy val fileSystem: FileSystem = getFileSystem
+  private lazy val indexShuffleBlockManager = new IndexShuffleBlockManager(conf, fileSystem)
   private val shuffleMapNumber = new ConcurrentHashMap[Int, Int]()
+
+  private def getFileSystem: FileSystem = {
+    if (conf.getBoolean("spark.shuffle.use_dfs", false)) {
+      new DistributedFileSystem(conf, new Configuration)
+    } else {
+      new LocalFileSystem
+    }
+  }
 
   /**
    * Register a shuffle with the manager and obtain a handle for it to pass to tasks.
@@ -49,7 +63,8 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       context: TaskContext): ShuffleReader[K, C] = {
     // We currently use the same block store shuffle fetcher as the hash-based shuffle.
     new HashShuffleReader(
-      handle.asInstanceOf[BaseShuffleHandle[K, _, C]], startPartition, endPartition, context)
+      handle.asInstanceOf[BaseShuffleHandle[K, _, C]], startPartition,
+      endPartition, context, fileSystem)
   }
 
   /** Get a writer for a given partition. Called on executors by map tasks. */
@@ -58,7 +73,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
     val baseShuffleHandle = handle.asInstanceOf[BaseShuffleHandle[K, V, _]]
     shuffleMapNumber.putIfAbsent(baseShuffleHandle.shuffleId, baseShuffleHandle.numMaps)
     new SortShuffleWriter(
-      shuffleBlockManager, baseShuffleHandle, mapId, context)
+      shuffleBlockManager, baseShuffleHandle, mapId, context, fileSystem)
   }
 
   /** Remove a shuffle's metadata from the ShuffleManager. */

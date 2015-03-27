@@ -19,16 +19,13 @@ package org.apache.spark.storage
 
 import java.io.{BufferedOutputStream, ByteArrayOutputStream, File, InputStream, OutputStream}
 import java.nio.{ByteBuffer, MappedByteBuffer}
-
 import scala.collection.mutable.{ArrayBuffer, HashMap}
 import scala.concurrent.{Await, Future}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.util.Random
-
 import akka.actor.{ActorSystem, Props}
 import sun.nio.ch.DirectBuffer
-
 import org.apache.spark._
 import org.apache.spark.executor._
 import org.apache.spark.io.CompressionCodec
@@ -41,6 +38,7 @@ import org.apache.spark.serializer.Serializer
 import org.apache.spark.shuffle.ShuffleManager
 import org.apache.spark.shuffle.hash.HashShuffleManager
 import org.apache.spark.util._
+import java.net.URI
 
 private[spark] sealed trait BlockValues
 private[spark] case class ByteBufferValues(buffer: ByteBuffer) extends BlockValues
@@ -647,11 +645,29 @@ private[spark] class BlockManager(
       file: File,
       serializer: Serializer,
       bufferSize: Int,
-      writeMetrics: ShuffleWriteMetrics): BlockObjectWriter = {
+      writeMetrics: ShuffleWriteMetrics,
+      fileSystem: FileSystem = new LocalFileSystem): BlockObjectWriter = {
+
+      getDiskWriter(
+        blockId,
+        file.toURI,
+        serializer,
+        bufferSize,
+        writeMetrics,
+        fileSystem)
+  }
+
+  def getDiskWriter(
+      blockId: BlockId,
+      file: URI,
+      serializer: Serializer,
+      bufferSize: Int,
+      writeMetrics: ShuffleWriteMetrics,
+      fileSystem: FileSystem): BlockObjectWriter = {
     val compressStream: OutputStream => OutputStream = wrapForCompression(blockId, _)
     val syncWrites = conf.getBoolean("spark.shuffle.sync", false)
-    new DiskBlockObjectWriter(blockId, file, serializer, bufferSize, compressStream, syncWrites,
-      writeMetrics)
+    new DiskBlockObjectWriter(blockId, file, serializer, bufferSize, compressStream,
+      syncWrites, writeMetrics, fileSystem)
   }
 
   /**

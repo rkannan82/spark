@@ -21,14 +21,16 @@ import org.apache.spark.{MapOutputTracker, SparkEnv, Logging, TaskContext}
 import org.apache.spark.executor.ShuffleWriteMetrics
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.{IndexShuffleBlockManager, ShuffleWriter, BaseShuffleHandle}
-import org.apache.spark.storage.ShuffleBlockId
+import org.apache.spark.storage.{FileSystem, ShuffleBlockId}
 import org.apache.spark.util.collection.ExternalSorter
+import org.apache.spark.ShuffleDependency
 
 private[spark] class SortShuffleWriter[K, V, C](
     shuffleBlockManager: IndexShuffleBlockManager,
     handle: BaseShuffleHandle[K, V, C],
     mapId: Int,
-    context: TaskContext)
+    context: TaskContext,
+    fileSystem: FileSystem)
   extends ShuffleWriter[K, V] with Logging {
 
   private val dep = handle.dependency
@@ -52,16 +54,16 @@ private[spark] class SortShuffleWriter[K, V, C](
     if (dep.mapSideCombine) {
       require(dep.aggregator.isDefined, "Map-side combine without Aggregator specified!")
       sorter = new ExternalSorter[K, V, C](
-        dep.aggregator, Some(dep.partitioner), dep.keyOrdering, dep.serializer)
-      sorter.insertAll(records)
+        dep.aggregator, Some(dep.partitioner), dep.keyOrdering, dep.serializer,
+        fileSystem)
     } else {
       // In this case we pass neither an aggregator nor an ordering to the sorter, because we don't
       // care whether the keys get sorted in each partition; that will be done on the reduce side
       // if the operation being run is sortByKey.
       sorter = new ExternalSorter[K, V, V](
-        None, Some(dep.partitioner), None, dep.serializer)
-      sorter.insertAll(records)
+        None, Some(dep.partitioner), None, dep.serializer, fileSystem)
     }
+    sorter.insertAll(records)
 
     val outputFile = shuffleBlockManager.getDataFile(dep.shuffleId, mapId)
     val blockId = shuffleBlockManager.consolidateId(dep.shuffleId, mapId)

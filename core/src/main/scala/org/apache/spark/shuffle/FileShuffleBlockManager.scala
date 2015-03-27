@@ -186,7 +186,7 @@ class FileShuffleBlockManager(conf: SparkConf)
         if (segmentOpt.isDefined) {
           val segment = segmentOpt.get
           return new FileSegmentManagedBuffer(
-            transportConf, segment.file, segment.offset, segment.length)
+            transportConf, new File(segment.file), segment.offset, segment.length)
         }
       }
       throw new IllegalStateException("Failed to find shuffle block: " + blockId)
@@ -289,7 +289,7 @@ object FileShuffleBlockManager {
       if (index >= 0) {
         val offset = blockOffsets(index)
         val length = blockLengths(index)
-        Some(new FileSegment(file, offset, length))
+        Some(new FileSegment(file.toURI, offset, length))
       } else {
         None
       }
