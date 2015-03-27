@@ -27,7 +27,7 @@ class BlockObjectWriterSuite extends FunSuite {
     val file = new File("somefile")
     file.deleteOnExit()
     val writeMetrics = new ShuffleWriteMetrics()
-    val writer = new DiskBlockObjectWriter(new TestBlockId("0"), file,
+    val writer = new DiskBlockObjectWriter(new TestBlockId("0"), file.toURI,
       new JavaSerializer(new SparkConf()), 1024, os => os, true, writeMetrics)
 
     writer.write(Long.box(20))
@@ -50,7 +50,7 @@ class BlockObjectWriterSuite extends FunSuite {
     val file = new File("somefile")
     file.deleteOnExit()
     val writeMetrics = new ShuffleWriteMetrics()
-    val writer = new DiskBlockObjectWriter(new TestBlockId("0"), file,
+    val writer = new DiskBlockObjectWriter(new TestBlockId("0"), file.toURI,
       new JavaSerializer(new SparkConf()), 1024, os => os, true, writeMetrics)
 
     writer.write(Long.box(20))
@@ -74,7 +74,7 @@ class BlockObjectWriterSuite extends FunSuite {
     val file = new File("somefile")
     file.deleteOnExit()
     val writeMetrics = new ShuffleWriteMetrics()
-    val writer = new DiskBlockObjectWriter(new TestBlockId("0"), file,
+    val writer = new DiskBlockObjectWriter(new TestBlockId("0"), file.toURI,
       new JavaSerializer(new SparkConf()), 1024, os => os, true, writeMetrics)
 
     writer.open()

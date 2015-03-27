@@ -36,7 +36,7 @@ class HashShuffleManagerSuite extends FunSuite with LocalSparkContext {
   private def checkSegments(expected: FileSegment, buffer: ManagedBuffer) {
     assert(buffer.isInstanceOf[FileSegmentManagedBuffer])
     val segment = buffer.asInstanceOf[FileSegmentManagedBuffer]
-    assert(expected.file.getCanonicalPath === segment.getFile.getCanonicalPath)
+    assert(new File(expected.file).getCanonicalPath === segment.getFile.getCanonicalPath)
     assert(expected.offset === segment.getOffset)
     assert(expected.length === segment.getLength)
   }
