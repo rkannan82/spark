@@ -17,40 +17,33 @@
 
 package org.apache.spark.network.buffer;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.RandomAccessFile;
-import java.net.URI;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 
 import com.google.common.base.Objects;
 import com.google.common.io.ByteStreams;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileContext;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.network.util.JavaUtils;
 import org.apache.spark.network.util.LimitedInputStream;
-import org.apache.spark.network.util.TransportConf;
 
 /**
  * A {@link ManagedBuffer} backed by a segment in a file stored in a DFS.
  */
 public final class DFSManagedBuffer extends ManagedBuffer {
-  private final FileSystem hadoopFS;
+  private final FileContext hadoopFS;
   private final Path path;
   private final long offset;
   private final long length;
 
-  public DFSManagedBuffer(Path path, long offset, long length)
+  public DFSManagedBuffer(Path path, long offset, long length, Configuration hadoopConf)
     throws IOException {
 
-    // TODO Avoid creating Conf
-    this.hadoopFS = FileSystem.get(new Configuration());
+    this.hadoopFS = org.apache.hadoop.fs.FileContext.getFileContext(hadoopConf);
     this.path = path;
     this.offset = offset;
     this.length = length;

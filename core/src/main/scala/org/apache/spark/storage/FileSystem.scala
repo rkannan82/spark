@@ -52,14 +52,14 @@ private[spark] trait FileSystem {
   def create(uri: URI, append: Boolean) : FSDataOutputStream
 
   /**
-   * Returns an input stream that is bounded by the given byte range.
+   * Returns an input stream that is bounded by the given size.
    */
-  def getBoundedStream(fileStream: FSDataInputStream, start: Long, end: Long): FSDataInputStream
+  def getBoundedStream(fileStream: FSDataInputStream, size: Long): FSDataInputStream
 
   /**
-   * Truncates the file up to the given offset.
+   * Truncates the file up to the given length.
    */
-  def truncateStream(fileStream: FSDataInputStream, position: Long)
+  def truncate(file: URI, length: Long)
 
   /**
    * Wraps the input stream in a compressed stream.

@@ -36,6 +36,10 @@ import org.apache.spark.serializer.Serializer
 import com.google.common.io.ByteStreams
 import java.io.BufferedInputStream
 import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.EnumSet
+import org.apache.hadoop.fs.CreateFlag
+import org.apache.hadoop.fs.Options
 
 /**
  * Interface to local file system operations for a Spark application.
@@ -44,34 +48,37 @@ private[spark] class LocalFileSystem extends FileSystem {
   private lazy val blockManager = SparkEnv.get.blockManager
   private lazy val diskBlockManager = blockManager.diskBlockManager
 
-  // TODO Can we avoid creating this since we just need it for IO streams
-  // If not, should get this using FileSystem.get.
-  private val localFS = new RawLocalFileSystem
-  localFS.initialize(URI.create("file:///"), new Configuration())
+  private val localFS = org.apache.hadoop.fs.FileContext.getLocalFSFileContext
 
   override def open(uri: URI) : FSDataInputStream = {
     localFS.open(new Path(uri))
   }
 
   override def create(uri: URI, append: Boolean) : FSDataOutputStream = {
-    if (append && exists(uri)) {
-      localFS.append(new Path(uri))
-    } else {
-      localFS.create(new Path(uri), true)
-    }
+    val createFlags =
+      if (append) {
+        EnumSet.of(CreateFlag.CREATE, CreateFlag.APPEND)
+      } else {
+        EnumSet.of(CreateFlag.CREATE, CreateFlag.OVERWRITE)
+      }
+
+    localFS.create(new Path(uri), createFlags, Options.CreateOpts.createParent)
   }
 
   override def getBoundedStream(
       fileStream: FSDataInputStream,
-      start: Long,
-      end: Long): FSDataInputStream = {
+      size: Long): FSDataInputStream = {
 
-    new FSDataInputStream(
-        new BufferedInputStream(ByteStreams.limit(fileStream, end - start)))
+    new FSDataInputStream(new BufferedInputStream(ByteStreams.limit(fileStream, size)))
   }
 
-  override def truncateStream(fileStream: FSDataInputStream, position: Long) = {
-    fileStream.getWrappedStream.asInstanceOf[FileInputStream].getChannel.truncate(position)
+  override def truncate(file: URI, length: Long) = {
+    val truncateStream = new FileOutputStream(new File(file), true);
+    try {
+      truncateStream.getChannel.truncate(length)
+    } finally {
+      truncateStream.close()
+    }
   }
 
   override def wrapForCompression(blockId: BlockId, fileStream: FSDataInputStream): InputStream = {

@@ -39,6 +39,16 @@ import org.apache.spark.network.util.TransportConf
 import org.apache.spark.SparkConf
 import org.apache.spark.util.Utils
 import org.apache.spark.network.buffer.DFSManagedBuffer
+import java.nio.ByteBuffer
+import org.apache.spark.util.ByteBufferInputStream
+import org.apache.commons.io.input.BoundedInputStream
+import java.io.ByteArrayInputStream
+import org.apache.hadoop.fs.Options.Rename
+import org.apache.hadoop.fs.CommonConfigurationKeysPublic.FS_DEFAULT_NAME_KEY
+import org.apache.hadoop.fs.AbstractFileSystem
+import org.apache.hadoop.fs.CreateFlag
+import java.util.EnumSet
+import org.apache.hadoop.fs.Options
 
 /**
  * Interface to HDFS operations for a Spark application.
@@ -49,21 +59,24 @@ private[spark] class DistributedFileSystem(
   extends FileSystem {
 
   private lazy val blockManager = SparkEnv.get.blockManager
-  private val hadoopFS = org.apache.hadoop.fs.FileSystem.get(hadoopConf)
+  private val hadoopFS = org.apache.hadoop.fs.FileContext.getFileContext(hadoopConf)
 
   /**
    * Application directory reserved for the node on DFS.
    */
   private lazy val nodeAppDirOnDFS = getNodeAppDirOnDFS
 
+  private def getLocalDirOnDFS: String = {
+    hadoopConf.get("fs.defaultFS") + conf.get("spark.dfs.local.dir", "/tmp")
+  }
+
   private def getNodeAppDirOnDFS: URI = {
-    val dir = conf.get("spark.dfs.local.dir", "/tmp") +
+    val dir = getLocalDirOnDFS +
       "/" + Utils.localHostName() +
       "/spark/" +
       conf.getAppId
 
-    val scheme = hadoopConf.get("fs.defaultFS")
-    new URI(scheme + dir)
+    new URI(dir)
   }
 
   def open(uri: URI) : FSDataInputStream = {
@@ -71,24 +84,45 @@ private[spark] class DistributedFileSystem(
   }
 
   override def create(uri: URI, append: Boolean) : FSDataOutputStream = {
-    if (append && exists(uri)) {
-      hadoopFS.append(new Path(uri))
-    } else {
-      hadoopFS.create(new Path(uri), true)
-    }
+    val createFlags =
+      if (append) {
+        EnumSet.of(CreateFlag.CREATE, CreateFlag.APPEND)
+      } else {
+        EnumSet.of(CreateFlag.CREATE, CreateFlag.OVERWRITE)
+      }
+
+    hadoopFS.create(new Path(uri), createFlags, Options.CreateOpts.createParent)
   }
 
   override def getBoundedStream(
       fileStream: FSDataInputStream,
-      start: Long,
-      end: Long): FSDataInputStream = {
+      size: Long): FSDataInputStream = {
 
-    // TODO
-    fileStream
+    new FSDataInputStream(new BoundedInputStream(fileStream, size))
   }
 
-  override def truncateStream(fileStream: FSDataInputStream, position: Long) = {
-    // TODO
+  override def truncate(file: URI, length: Long) = {
+    // TODO HDFS-3107 adds support for truncation and is available in 2.7.0.
+    // Use reflection based lookup to use the API and maintain backward compatibility.
+    if (length == 0) {
+      // Just overwrite the file
+      create(file, false)
+    } else {
+      // Copy the contents of the file up to the specified length to a new temp file
+      // and finally rename it.
+      val truncatedFileName = file.toString + ".truncated"
+      val truncatedFile = new URI(truncatedFileName)
+      val outputStream = create(file, false)
+      try {
+        // TODO Handle large file
+        getBytes(file, length).map(bytes => outputStream.write(bytes, 0,
+          length.toInt))
+      } finally {
+        outputStream.close
+      }
+
+      hadoopFS.rename(new Path(file), new Path(truncatedFile), Rename.OVERWRITE)
+    }
   }
 
   override def wrapForCompression(blockId: BlockId, fileStream: FSDataInputStream): InputStream = {
@@ -105,7 +139,7 @@ private[spark] class DistributedFileSystem(
   }
 
   override def exists(uri: URI): Boolean = {
-    hadoopFS.exists(new Path(uri))
+    hadoopFS.util.exists(new Path(uri))
   }
 
   override def getFileSize(uri: URI): Long = {
@@ -126,12 +160,41 @@ private[spark] class DistributedFileSystem(
     writer: BlockObjectWriter,
     serializer: Serializer): Option[Iterator[Any]] = {
 
-    // TODO
-    throw new RuntimeException("Unsupported")
+    val file = getTempFilePath(writer.blockId.name)
+    val length = getFileSize(file)
+    getBytes(file, length).map(bytes => dataDeserialize(writer.blockId, bytes, serializer))
+  }
+
+  /**
+   * Deserializes a ByteBuffer into an iterator of values and disposes of it when the end of
+   * the iterator is reached.
+   *
+   * Copied from DiskManager.scala
+   */
+  private def dataDeserialize(
+      blockId: BlockId,
+      bytes: Array[Byte],
+      serializer: Serializer): Iterator[Any] = {
+
+    val stream = new ByteArrayInputStream(bytes)
+    serializer.newInstance().deserializeStream(stream).asIterator
+  }
+
+  private def getBytes(file: URI, length: Long): Option[Array[Byte]] = {
+    val inputStream = open(file)
+
+    try {
+      // TODO Handle large file
+      val buf = new Array[Byte](length.toInt)
+      inputStream.readFully(0, buf)
+      Some(buf)
+    } finally {
+      inputStream.close
+    }
   }
 
   override def getShuffleClient(): ShuffleClient = {
-    new DFSShuffleClient(hadoopConf)
+    new DFSShuffleClient(getLocalDirOnDFS, hadoopConf)
   }
 
   override def createManagedBuffer(
@@ -140,6 +203,6 @@ private[spark] class DistributedFileSystem(
     length: Long,
     transportConf: TransportConf): ManagedBuffer = {
 
-    new DFSManagedBuffer(new Path(file), offset, length)
+    new DFSManagedBuffer(new Path(file), offset, length, hadoopConf)
   }
 }

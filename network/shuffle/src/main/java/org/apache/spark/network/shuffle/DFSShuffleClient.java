@@ -18,13 +18,13 @@
 package org.apache.spark.network.shuffle;
 
 import java.io.IOException;
-import java.net.URI;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileContext;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.network.buffer.DFSManagedBuffer;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,17 +34,17 @@ import org.slf4j.LoggerFactory;
 public class DFSShuffleClient extends ShuffleClient {
   private final Logger logger = LoggerFactory.getLogger(DFSShuffleClient.class);
 
-  private final Configuration conf;
-  private final FileSystem fileSystem;
+  private final Configuration hadoopConf;
+  private final FileContext fileSystem;
   private String appId;
   private String dfsBaseDir;
 
-  public DFSShuffleClient(Configuration conf) throws IOException {
-    this.conf = conf;
-    this.fileSystem = FileSystem.get(conf);
-    // TODO
-    String sparkLocalDir = "/tmp/";
-    this.dfsBaseDir = conf.get("fs.defaultFS") + sparkLocalDir;
+  public DFSShuffleClient(String dfsBaseDir, Configuration hadoopConf)
+    throws IOException {
+
+    this.hadoopConf = hadoopConf;
+    this.fileSystem = org.apache.hadoop.fs.FileContext.getFileContext(hadoopConf);
+    this.dfsBaseDir = dfsBaseDir;
   }
 
   @Override
@@ -107,7 +107,7 @@ public class DFSShuffleClient extends ShuffleClient {
       long nextOffset = inputStream.readLong();
       Path dataFile = getDFSPath(host, getDataFile(shuffleId, mapId));
 
-      return new DFSManagedBuffer(dataFile, offset, nextOffset - offset);
+      return new DFSManagedBuffer(dataFile, offset, nextOffset - offset, hadoopConf);
     } finally {
       inputStream.close();
     }
@@ -122,13 +122,17 @@ public class DFSShuffleClient extends ShuffleClient {
   }
 
   private String getShuffleFile(int shuffleId, int mapId) {
-    return "shuffle_" + shuffleId + "_" + mapId + "_0";
+    StringBuilder sb = new StringBuilder();
+    sb.append("shuffle_").append(shuffleId).append("_").append(mapId).append("_0");
+    return sb.toString();
   }
 
   private Path getDFSPath(String host, String fileName) {
-    String nodeDirOnDFS = dfsBaseDir + host + "/spark/" + appId;
-    Path path = new Path(nodeDirOnDFS + "/" + fileName);
-    return path;
+    StringBuilder sb = new StringBuilder();
+    sb.append(dfsBaseDir).append(host).append("/spark/").append(appId)
+      .append("/").append(fileName);
+
+    return new Path(sb.toString());
   }
 
   @Override

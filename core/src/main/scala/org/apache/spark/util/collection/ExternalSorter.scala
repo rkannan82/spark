@@ -565,7 +565,7 @@ private[spark] class ExternalSorter[K, V, C](
         assert(end >= start, "start = " + start + ", end = " + end +
           ", batchOffsets = " + batchOffsets.mkString("[", ", ", "]"))
 
-        val boundedFileStream = fileSystem.getBoundedStream(fileStream, start, end)
+        val boundedFileStream = fileSystem.getBoundedStream(fileStream, end - start)
         val compressedStream = fileSystem.wrapForCompression(spill.blockId,
           boundedFileStream)
         serInstance.deserializeStream(compressedStream)

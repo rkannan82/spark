@@ -203,12 +203,7 @@ private[spark] class DiskBlockObjectWriter(
         close()
       }
 
-      val truncateStream = fileSystem.open(file)
-      try {
-        fileSystem.truncateStream(truncateStream, initialPosition)
-      } finally {
-        truncateStream.close()
-      }
+      fileSystem.truncate(file, initialPosition)
     } catch {
       case e: Exception =>
         logError("Uncaught exception while reverting partial writes to file " + file, e)
