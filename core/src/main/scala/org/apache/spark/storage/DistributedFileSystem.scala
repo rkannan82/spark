@@ -60,7 +60,8 @@ private[spark] class DistributedFileSystem(
 
   private lazy val blockManager = SparkEnv.get.blockManager
   private val hadoopFS = org.apache.hadoop.fs.FileContext.getFileContext(hadoopConf)
-
+  private lazy val shuffleClient = getDFSShuffleClient
+  
   /**
    * Application directory reserved for the node on DFS.
    */
@@ -77,6 +78,13 @@ private[spark] class DistributedFileSystem(
       conf.getAppId
 
     new URI(dir)
+  }
+
+  private def getDFSShuffleClient: ShuffleClient = {
+    val shuffleClient = new DFSShuffleClient(getLocalDirOnDFS, hadoopConf)
+    shuffleClient.init(conf.getAppId)
+
+    shuffleClient
   }
 
   def open(uri: URI) : FSDataInputStream = {
@@ -194,7 +202,7 @@ private[spark] class DistributedFileSystem(
   }
 
   override def getShuffleClient(): ShuffleClient = {
-    new DFSShuffleClient(getLocalDirOnDFS, hadoopConf)
+    shuffleClient
   }
 
   override def createManagedBuffer(
