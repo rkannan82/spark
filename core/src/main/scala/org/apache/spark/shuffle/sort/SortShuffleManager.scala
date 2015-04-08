@@ -94,5 +94,8 @@ private[spark] class SortShuffleManager(
   /** Shut down this ShuffleManager. */
   override def stop(): Unit = {
     shuffleBlockManager.stop()
+    if (fileSystem != null) {
+      fileSystem.close
+    }
   }
 }

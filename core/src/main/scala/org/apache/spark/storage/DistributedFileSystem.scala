@@ -81,7 +81,9 @@ private[spark] class DistributedFileSystem(
   }
 
   private def getDFSShuffleClient: ShuffleClient = {
-    val shuffleClient = new DFSShuffleClient(getLocalDirOnDFS, hadoopConf)
+    val maxThreads = conf.getInt("spark.shuffle.dfs_client.threads", 1)
+    val shuffleClient = new DFSShuffleClient(getLocalDirOnDFS, hadoopConf,
+      maxThreads)
     shuffleClient.init(conf.getAppId)
 
     shuffleClient
@@ -212,5 +214,11 @@ private[spark] class DistributedFileSystem(
     transportConf: TransportConf): ManagedBuffer = {
 
     new DFSManagedBuffer(new Path(file), offset, length, hadoopConf)
+  }
+
+  override def close = {
+    if (shuffleClient != null) {
+      shuffleClient.close
+    }
   }
 }

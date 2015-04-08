@@ -138,4 +138,7 @@ private[spark] class LocalFileSystem extends FileSystem {
       offset,
       length)
   }
+
+  override def close = {
+  }
 }

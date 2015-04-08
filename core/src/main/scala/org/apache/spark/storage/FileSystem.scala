@@ -122,4 +122,9 @@ private[spark] trait FileSystem {
     offset: Long,
     length: Long,
     transportConf: TransportConf): ManagedBuffer
+
+  /**
+   * Closes the file system resources.
+   */
+  def close
 }

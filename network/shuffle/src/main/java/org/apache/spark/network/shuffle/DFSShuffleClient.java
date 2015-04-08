@@ -18,6 +18,8 @@
 package org.apache.spark.network.shuffle;
 
 import java.io.IOException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -38,13 +40,15 @@ public class DFSShuffleClient extends ShuffleClient {
   private final FileContext fileSystem;
   private String appId;
   private String dfsBaseDir;
+  private final ExecutorService fetcherService;
 
-  public DFSShuffleClient(String dfsBaseDir, Configuration hadoopConf)
+  public DFSShuffleClient(String dfsBaseDir, Configuration hadoopConf, int maxThreads)
     throws IOException {
 
     this.hadoopConf = hadoopConf;
     this.fileSystem = org.apache.hadoop.fs.FileContext.getFileContext(hadoopConf);
     this.dfsBaseDir = dfsBaseDir;
+    this.fetcherService = Executors.newFixedThreadPool(maxThreads);
   }
 
   @Override
@@ -58,12 +62,16 @@ public class DFSShuffleClient extends ShuffleClient {
       final int port,
       final String execId,
       String[] blockIds,
-      BlockFetchingListener listener) {
+      final BlockFetchingListener listener) {
     assert appId != null : "Called before init()";
     logger.debug("External shuffle fetch from {}:{} (executor id {})", host, port, execId);
 
-    for (String blockId : blockIds) {
-     fetchBlock(host, blockId, listener);
+    for (final String blockId : blockIds) {
+      fetcherService.submit(new Runnable() {
+        public void run() {
+          fetchBlock(host, blockId, listener);
+        }
+      });
     }
   }
 
@@ -137,5 +145,7 @@ public class DFSShuffleClient extends ShuffleClient {
 
   @Override
   public void close() {
+    logger.debug("Shutting down fetcher service for {}", appId);
+    fetcherService.shutdown();
   }
 }
