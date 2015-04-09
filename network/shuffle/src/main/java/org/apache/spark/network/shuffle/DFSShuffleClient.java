@@ -137,7 +137,7 @@ public class DFSShuffleClient extends ShuffleClient {
 
   private Path getDFSPath(String host, String fileName) {
     StringBuilder sb = new StringBuilder();
-    sb.append(dfsBaseDir).append("/").append(host).append("/spark/").append(appId)
+    sb.append(dfsBaseDir).append("/").append(host).append("/spark/shuffle/").append(appId)
       .append("/").append(fileName);
 
     return new Path(sb.toString());

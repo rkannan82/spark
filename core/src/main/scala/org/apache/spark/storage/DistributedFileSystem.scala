@@ -74,7 +74,7 @@ private[spark] class DistributedFileSystem(
   private def getNodeAppDirOnDFS: URI = {
     val dir = getLocalDirOnDFS +
       "/" + Utils.localHostName() +
-      "/spark/" +
+      "/spark/shuffle/" +
       conf.getAppId
 
     new URI(dir)
