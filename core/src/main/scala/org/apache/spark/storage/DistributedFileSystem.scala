@@ -49,6 +49,7 @@ import org.apache.hadoop.fs.AbstractFileSystem
 import org.apache.hadoop.fs.CreateFlag
 import java.util.EnumSet
 import org.apache.hadoop.fs.Options
+import org.apache.hadoop.io.IOUtils
 
 /**
  * Interface to HDFS operations for a Spark application.
@@ -119,20 +120,24 @@ private[spark] class DistributedFileSystem(
       create(file, false)
     } else {
       // Copy the contents of the file up to the specified length to a new temp file
-      // and finally rename it.
+      // and finally rename it to the original file.
       val truncatedFileName = file.toString + ".truncated"
       val truncatedFile = new URI(truncatedFileName)
-      val outputStream = create(file, false)
-      try {
-        // TODO Handle large file
-        getBytes(file, length).map(bytes => outputStream.write(bytes, 0,
-          length.toInt))
-      } finally {
-        outputStream.close
-      }
-
-      hadoopFS.rename(new Path(file), new Path(truncatedFile), Rename.OVERWRITE)
+      copyFile(file, truncatedFile, length)
+      val truncatedFilePath = new Path(truncatedFile)
+      hadoopFS.rename(truncatedFilePath, new Path(file), Rename.OVERWRITE)
+      hadoopFS.delete(truncatedFilePath, true)
     }
+  }
+
+  /**
+   * Copies the contents of source file to destination file up to the specified
+   * length.
+   */
+  private def copyFile(srcFile: URI, dstFile: URI, length: Long) = {
+    val inStream = getBoundedStream(open(srcFile), length)
+    val outStream = create(dstFile, false)
+    IOUtils.copyBytes(inStream, outStream, hadoopConf)
   }
 
   override def wrapForCompression(blockId: BlockId, fileStream: FSDataInputStream): InputStream = {
@@ -172,35 +177,8 @@ private[spark] class DistributedFileSystem(
 
     val file = getTempFilePath(writer.blockId.name)
     val length = getFileSize(file)
-    getBytes(file, length).map(bytes => dataDeserialize(writer.blockId, bytes, serializer))
-  }
-
-  /**
-   * Deserializes a ByteBuffer into an iterator of values and disposes of it when the end of
-   * the iterator is reached.
-   *
-   * Copied from DiskManager.scala
-   */
-  private def dataDeserialize(
-      blockId: BlockId,
-      bytes: Array[Byte],
-      serializer: Serializer): Iterator[Any] = {
-
-    val stream = new ByteArrayInputStream(bytes)
-    serializer.newInstance().deserializeStream(stream).asIterator
-  }
-
-  private def getBytes(file: URI, length: Long): Option[Array[Byte]] = {
-    val inputStream = open(file)
-
-    try {
-      // TODO Handle large file
-      val buf = new Array[Byte](length.toInt)
-      inputStream.readFully(0, buf)
-      Some(buf)
-    } finally {
-      inputStream.close
-    }
+    val stream = getBoundedStream(open(file), length)
+    Some(serializer.newInstance().deserializeStream(stream).asIterator)
   }
 
   override def getShuffleClient(): ShuffleClient = {
